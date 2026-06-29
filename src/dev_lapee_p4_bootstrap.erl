@@ -215,6 +215,7 @@ install_base_config(NodeMsg0, Address, Beneficiary, LedgerProc, WithdrawSecret) 
         <<"ao-payment-token">> => ?AO_TOKEN,
         <<"ao-payment-deposit-address">> => Address,
         <<"ao-payment-withdraw-recipient">> => Beneficiary,
+        <<"ao-payment-auto-withdraw">> => true,
         <<"ao-payment-mainnet-url">> => <<"https://state.forward.computer">>,
         <<"ao-payment-ledger-path">> => ?LEDGER_PATH,
         <<"ao-payment-submit-url">> => <<"https://mu.ao-testnet.xyz">>,
@@ -225,15 +226,14 @@ install_base_config(NodeMsg0, Address, Beneficiary, LedgerProc, WithdrawSecret) 
     },
     hb_private:set(NodeMsg1, <<"ao-payment-withdraw-secret">>, WithdrawSecret, NodeMsg0).
 
-install_hooks(NodeMsg0, Address, Beneficiary, LedgerID, BootstrapDevice, DeviceRefs) ->
+install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, BootstrapDevice, DeviceRefs) ->
     PricingConfig = pricing_config(NodeMsg0),
     Processor = p4_processor(PricingConfig, DeviceRefs),
-    Settlement = bundler_settlement(Address, Beneficiary, PricingConfig, DeviceRefs),
     On0 = map_opt(<<"on">>, NodeMsg0),
     BundledMessageComplete =
         append_hook_handlers(
             maps:get(<<"bundled-message-complete">>, On0, []),
-            [Settlement, bundler_gc_hook(DeviceRefs)]
+            [bundler_gc_hook(DeviceRefs)]
         ),
     Request =
         request_processor(
@@ -486,23 +486,6 @@ p4_processor(PricingConfig, DeviceRefs) ->
         ]
     }).
 
-bundler_settlement(Address, Beneficiary, PricingConfig, DeviceRefs) ->
-    maps:merge(PricingConfig, #{
-        <<"device">> => maps:get(<<"bundler-settlement@1.0">>, DeviceRefs),
-        <<"ledger-device">> => maps:get(<<"ao-payment@1.0">>, DeviceRefs),
-        <<"pricing-device">> =>
-            maps:get(<<"arweave-byte-pricing@1.0">>, DeviceRefs),
-        <<"ledger-path">> => ?LEDGER_PATH,
-        <<"settlement-account">> => Address,
-        <<"beneficiary">> => Beneficiary,
-        <<"withdraw">> => true,
-        <<"withdraw-device">> => maps:get(<<"ao-payment@1.0">>, DeviceRefs),
-        <<"withdraw-token">> => ?AO_TOKEN,
-        <<"withdraw-recipient">> => Beneficiary,
-        <<"withdrawal-account">> => ?AO_TOKEN,
-        <<"hook">> => #{<<"result">> => <<"ignore">>}
-    }).
-
 pricing_config(NodeMsg) ->
     copy_config_keys(
         [
@@ -569,6 +552,7 @@ install_base_config_clears_stale_ledger_name_test() ->
     ?assertEqual(false, maps:is_key(<<"ledger">>, LocalNames)),
     ?assertEqual(<<"kept-id">>, maps:get(<<"other">>, LocalNames)),
     ?assertEqual(LedgerProc, maps:get(<<"ledger">>, NodeProcesses)),
+    ?assertEqual(true, maps:get(<<"ao-payment-auto-withdraw">>, Config)),
     ?assertEqual(?LEDGER_PATH, hb_maps:get(<<"ao-payment-ledger-path">>, Config, undefined, Config)).
 
 install_hooks_copies_pricing_config_test() ->
@@ -596,17 +580,13 @@ install_hooks_copies_pricing_config_test() ->
     On = maps:get(<<"on">>, Config),
     Request = maps:get(<<"request">>, On),
     [Response] = maps:get(<<"response">>, On),
-    [Settlement, _GC] = maps:get(<<"bundled-message-complete">>, On),
+    [_GC] = maps:get(<<"bundled-message-complete">>, On),
     ?assertEqual(<<"ao-payment-ref">>, maps:get(<<"ledger-device">>, Request)),
     ?assertEqual(12.5, maps:get(<<"bundler-premium">>, Request)),
     ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Request)),
     ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Request)),
     ?assertEqual(12.5, maps:get(<<"bundler-premium">>, Response)),
     ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Response)),
-    ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Response)),
-    ?assertEqual(<<"ao-payment-ref">>, maps:get(<<"ledger-device">>, Settlement)),
-    ?assertEqual(12.5, maps:get(<<"bundler-premium">>, Settlement)),
-    ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Settlement)),
-    ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Settlement)).
+    ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Response)).
 
 -endif.
