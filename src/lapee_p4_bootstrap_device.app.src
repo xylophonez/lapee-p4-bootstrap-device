@@ -1,0 +1,8 @@
+{application, lapee_p4_bootstrap_device, [
+    {description, "Standalone HyperBEAM LapEE p4 bootstrap device"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {env, []},
+    {modules, []}
+]}.
