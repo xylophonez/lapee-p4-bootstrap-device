@@ -424,6 +424,8 @@ profile_device_refs(NodeMsg, BootstrapDevice) ->
         <<"lapee-p4-bootstrap@1.0">> => BootstrapDevice,
         <<"pricing-router@1.0">> =>
             device_ref(<<"pricing-router@1.0">>, NodeMsg),
+        <<"recharging-ledger@1.0">> =>
+            device_ref(<<"recharging-ledger@1.0">>, NodeMsg),
         <<"simple-oracle@1.0">> =>
             device_ref(<<"simple-oracle@1.0">>, NodeMsg)
     }.
@@ -466,9 +468,10 @@ list_opt(Key, NodeMsg) ->
     end.
 
 p4_processor(PricingConfig, DeviceRefs) ->
-    maps:merge(PricingConfig, #{
+    LedgerDevice = p4_ledger_device(PricingConfig, DeviceRefs),
+    maps:merge(maps:remove(<<"p4-ledger-device">>, PricingConfig), #{
         <<"device">> => <<"p4@1.0">>,
-        <<"ledger-device">> => maps:get(<<"ao-payment@1.0">>, DeviceRefs),
+        <<"ledger-device">> => LedgerDevice,
         <<"pricing-device">> => maps:get(<<"pricing-router@1.0">>, DeviceRefs),
         <<"default-pricing-device">> => <<"simple-pay@1.0">>,
         <<"ledger-path">> => ?LEDGER_PATH,
@@ -486,14 +489,25 @@ p4_processor(PricingConfig, DeviceRefs) ->
         ]
     }).
 
+p4_ledger_device(PricingConfig, DeviceRefs) ->
+    Name = maps:get(<<"p4-ledger-device">>, PricingConfig, <<"ao-payment@1.0">>),
+    maps:get(Name, DeviceRefs, Name).
+
 pricing_config(NodeMsg) ->
     copy_config_keys(
         [
+            <<"p4-ledger-device">>,
             <<"arweave-byte-price">>,
             <<"bundler-premium">>,
             <<"bundler_premium">>,
             <<"bundler-free-byte-limit">>,
-            <<"bundler_free_byte_limit">>
+            <<"bundler_free_byte_limit">>,
+            <<"recharging-ledger-fallback">>,
+            <<"recharging-ledger-max">>,
+            <<"recharging-ledger-recharge">>,
+            <<"recharging-ledger-period">>,
+            <<"recharging-ledger-grace">>,
+            <<"recharging-ledger-exempt">>
         ],
         NodeMsg,
         #{}
@@ -562,7 +576,8 @@ install_hooks_copies_pricing_config_test() ->
             <<"arweave-byte-pricing@1.0">> => <<"arweave-byte-pricing-ref">>,
             <<"bundler-settlement@1.0">> => <<"bundler-settlement-ref">>,
             <<"lapee-bundler-gc@1.0">> => <<"lapee-bundler-gc-ref">>,
-            <<"pricing-router@1.0">> => <<"pricing-router-ref">>
+            <<"pricing-router@1.0">> => <<"pricing-router-ref">>,
+            <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
         },
     Config =
         install_hooks(
@@ -588,5 +603,46 @@ install_hooks_copies_pricing_config_test() ->
     ?assertEqual(12.5, maps:get(<<"bundler-premium">>, Response)),
     ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Response)),
     ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Response)).
+
+install_hooks_can_select_recharging_ledger_test() ->
+    Fallback =
+        #{
+            <<"device">> => <<"ao-payment@1.0">>,
+            <<"ledger-path">> => ?LEDGER_PATH,
+            <<"auto-withdraw">> => true
+        },
+    DeviceRefs =
+        #{
+            <<"ao-payment@1.0">> => <<"ao-payment-ref">>,
+            <<"arweave-byte-pricing@1.0">> => <<"arweave-byte-pricing-ref">>,
+            <<"bundler-settlement@1.0">> => <<"bundler-settlement-ref">>,
+            <<"lapee-bundler-gc@1.0">> => <<"lapee-bundler-gc-ref">>,
+            <<"pricing-router@1.0">> => <<"pricing-router-ref">>,
+            <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
+        },
+    Config =
+        install_hooks(
+            #{
+                <<"p4-ledger-device">> => <<"recharging-ledger@1.0">>,
+                <<"recharging-ledger-fallback">> => Fallback,
+                <<"recharging-ledger-max">> => 3000000000,
+                <<"recharging-ledger-recharge">> => 1000,
+                <<"recharging-ledger-grace">> => 0
+            },
+            <<"node-address">>,
+            <<"beneficiary-address">>,
+            <<"ledger-id">>,
+            <<"bootstrap-ref">>,
+            DeviceRefs
+        ),
+    On = maps:get(<<"on">>, Config),
+    Request = maps:get(<<"request">>, On),
+    [Response] = maps:get(<<"response">>, On),
+    ?assertEqual(<<"recharging-ledger-ref">>, maps:get(<<"ledger-device">>, Request)),
+    ?assertEqual(Fallback, maps:get(<<"recharging-ledger-fallback">>, Request)),
+    ?assertEqual(3000000000, maps:get(<<"recharging-ledger-max">>, Request)),
+    ?assertEqual(1000, maps:get(<<"recharging-ledger-recharge">>, Response)),
+    ?assertEqual(false, maps:is_key(<<"p4-ledger-device">>, Request)),
+    ?assertEqual(false, maps:is_key(<<"p4-commit-charge">>, Request)).
 
 -endif.
