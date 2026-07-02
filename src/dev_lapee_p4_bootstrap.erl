@@ -502,7 +502,7 @@ pricing_config(NodeMsg) ->
             <<"bundler_premium">>,
             <<"bundler-free-byte-limit">>,
             <<"bundler_free_byte_limit">>,
-            <<"recharging-ledger-fallback">>,
+            <<"recharging-ledger-fallbacks">>,
             <<"recharging-ledger-max">>,
             <<"recharging-ledger-recharge">>,
             <<"recharging-ledger-period">>,
@@ -611,6 +611,7 @@ install_hooks_can_select_recharging_ledger_test() ->
             <<"ledger-path">> => ?LEDGER_PATH,
             <<"auto-withdraw">> => true
         },
+    Fallbacks = [Fallback],
     DeviceRefs =
         #{
             <<"ao-payment@1.0">> => <<"ao-payment-ref">>,
@@ -624,7 +625,7 @@ install_hooks_can_select_recharging_ledger_test() ->
         install_hooks(
             #{
                 <<"p4-ledger-device">> => <<"recharging-ledger@1.0">>,
-                <<"recharging-ledger-fallback">> => Fallback,
+                <<"recharging-ledger-fallbacks">> => Fallbacks,
                 <<"recharging-ledger-max">> => 3000000000,
                 <<"recharging-ledger-recharge">> => 1000,
                 <<"recharging-ledger-grace">> => 0
@@ -639,7 +640,7 @@ install_hooks_can_select_recharging_ledger_test() ->
     Request = maps:get(<<"request">>, On),
     [Response] = maps:get(<<"response">>, On),
     ?assertEqual(<<"recharging-ledger-ref">>, maps:get(<<"ledger-device">>, Request)),
-    ?assertEqual(Fallback, maps:get(<<"recharging-ledger-fallback">>, Request)),
+    ?assertEqual(Fallbacks, maps:get(<<"recharging-ledger-fallbacks">>, Request)),
     ?assertEqual(3000000000, maps:get(<<"recharging-ledger-max">>, Request)),
     ?assertEqual(1000, maps:get(<<"recharging-ledger-recharge">>, Response)),
     ?assertEqual(false, maps:is_key(<<"p4-ledger-device">>, Request)),
