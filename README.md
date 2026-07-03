@@ -31,6 +31,59 @@ Install the local pre-push hook with:
 scripts/install-git-hooks.sh
 ```
 
+## Top-Up Routes
+
+When the profile uses `recharging-ledger@1.0` as the P4 ledger, paid fallback
+ledgers are configured with `recharging-ledger-fallbacks`:
+
+```json
+{
+  "p4-ledger-device": "recharging-ledger@1.0",
+  "recharging-ledger-fallbacks": [
+    {
+      "device": "ao-payment@1.0",
+      "ledger-path": "/ledger~node-process@1.0",
+      "auto-withdraw": true,
+      "withdraw-token": "0syT13r0s0tgPmIed95bJnuSqaD29HQNN8D3ElLSrsc",
+      "withdraw-recipient": "<bundler-beneficiary>"
+    }
+  ]
+}
+```
+
+At boot, the bootstrap device computes a stable ID for each fallback message and
+stores the route map in `lapee-topup-routes`. This ID is a top-up route key for
+that fallback config. It is not the local ledger process ID.
+
+Clients should discover the available routes from the node:
+
+```text
+GET /~meta@1.0/info/lapee-topup-routes?accept=application/json&require-codec=application/json
+```
+
+Then call the bootstrap top-up endpoint with the selected route key:
+
+```text
+POST /~lapee-p4-bootstrap@1.0/topup?topup-route=<route-id>
+```
+
+The client should not calculate the route ID itself. With one fallback, use the
+only route. With multiple fallbacks, inspect the route value and choose the
+payment device the client supports. `ao-payment@1.0` routes are forwarded to
+`ingest`; other fallback devices default to `topup`.
+
+## Published Device
+
+```bash
+device publish: lapee-p4-bootstrap@1.0 
+
+spec=xC0kc--Ata4MPzJDyKqLSfWGal5OC2NiAtw0y9ZNf7Q 
+
+impl=mR2aqX5udR7HiOexS3KDbURu59q7sjcJdYOXrxZkk0I 
+
+signer=vZY2XY1RD9HIfWi8ift-1_DnHLDadZMWrufSh-_rKF0
+```
+
 ## Docs
 
 - `docs/api.md`
