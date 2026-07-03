@@ -6,7 +6,7 @@
 %%% local payment ledger process, and then enables the P4 request/response hooks.
 -module(dev_lapee_p4_bootstrap).
 -implements(<<"lapee-p4-bootstrap@1.0">>).
--export([info/1, start/3, request/3, response/3]).
+-export([info/1, start/3, request/3, response/3, topup/3]).
 
 -include_lib("hb/include/hb.hrl").
 -ifdef(TEST).
@@ -18,7 +18,7 @@
 -define(LEDGER_PATH, <<"/ledger~node-process@1.0">>).
 
 info(_) ->
-    #{exports => [<<"start">>, <<"request">>, <<"response">>]}.
+    #{exports => [<<"start">>, <<"request">>, <<"response">>, <<"topup">>]}.
 
 start(Base, #{<<"body">> := NodeMsg0}, _Opts) ->
     case configure(NodeMsg0, bootstrap_device_ref(Base)) of
@@ -51,8 +51,44 @@ response(State, Raw, Opts) ->
         false -> resolve_device(p4_state(State), <<"response">>, Raw, Opts)
     end.
 
+topup(Base, Req, Opts) ->
+    case topup_route_id(Req, Opts) of
+        undefined ->
+            {error, #{
+                <<"status">> => 400,
+                <<"body">> => <<"Missing top-up route.">>
+            }};
+        RouteID ->
+            Routes =
+                hb_maps:get(
+                    <<"lapee-topup-routes">>,
+                    Base,
+                    hb_opts:get(lapee_topup_routes, #{}, Opts),
+                    Opts
+                ),
+            case hb_maps:get(RouteID, Routes, undefined, Opts) of
+                undefined ->
+                    {error, #{
+                        <<"status">> => 404,
+                        <<"body">> => <<"Unknown top-up route.">>
+                    }};
+                Route ->
+                    resolve_topup_route(Route, Req, Opts)
+            end
+    end.
+
 resolve_device(Base, Path, Req, Opts) ->
     hb_ao:resolve(Base, Req#{<<"path">> => Path}, Opts).
+
+topup_route_id(Req, Opts) ->
+    hb_ao:get(<<"topup-route">>, Req, undefined, Opts).
+
+resolve_topup_route(Route, Req, Opts) ->
+    Path = hb_maps:get(<<"topup-path">>, Route, <<"topup">>, Opts),
+    Base = maps:remove(<<"topup-path">>, Route),
+    ForwardReq =
+        maps:remove(<<"topup-route">>, Req#{<<"path">> => Path}),
+    hb_ao:resolve(Base, ForwardReq, Opts).
 
 configure(NodeMsg0, BootstrapDevice) ->
     Address = node_address(NodeMsg0),
@@ -229,6 +265,7 @@ install_base_config(NodeMsg0, Address, Beneficiary, LedgerProc, WithdrawSecret) 
 install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, BootstrapDevice, DeviceRefs) ->
     PricingConfig = pricing_config(NodeMsg0),
     Processor = p4_processor(PricingConfig, DeviceRefs),
+    TopupRoutes = topup_routes(Processor, NodeMsg0),
     On0 = map_opt(<<"on">>, NodeMsg0),
     BundledMessageComplete =
         append_hook_handlers(
@@ -255,6 +292,7 @@ install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, BootstrapDevice, Devic
     LocalNames0 = map_opt(<<"local-names">>, NodeMsg0),
     NodeMsg0#{
         <<"ao-payment-ledger">> => LedgerID,
+        <<"lapee-topup-routes">> => TopupRoutes,
         <<"local-names">> => LocalNames0#{?LEDGER_NAME => LedgerID},
         <<"p4-non-chargable-routes">> => p4_non_chargable_routes(LedgerID),
         <<"on">> => On1
@@ -467,6 +505,28 @@ list_opt(Key, NodeMsg) ->
         _ -> []
     end.
 
+topup_routes(Processor, Opts) ->
+    maps:from_list(
+        [
+            {ledger_message_id(Fallback, Opts), topup_route(Fallback, Opts)}
+         || Fallback <- list_opt(<<"recharging-ledger-fallbacks">>, Processor),
+            is_map(Fallback)
+        ]
+    ).
+
+ledger_message_id(Msg, Opts) ->
+    hb_message:id(Msg, unsigned, Opts).
+
+topup_route(Fallback, Opts) ->
+    Fallback#{
+        <<"topup-path">> => topup_path(hb_maps:get(<<"device">>, Fallback, undefined, Opts))
+    }.
+
+topup_path(<<"ao-payment@1.0">>) ->
+    <<"ingest">>;
+topup_path(_Device) ->
+    <<"topup">>.
+
 p4_processor(PricingConfig, DeviceRefs) ->
     LedgerDevice = p4_ledger_device(PricingConfig, DeviceRefs),
     maps:merge(maps:remove(<<"p4-ledger-device">>, PricingConfig), #{
@@ -527,6 +587,7 @@ p4_non_chargable_routes(LedgerID) ->
         #{<<"template">> => <<?LEDGER_PATH/binary, "/*">>},
         #{<<"template">> => <<"/", LedgerID/binary, "~process@1.0/*">>},
         #{<<"template">> => <<"/~ao-payment@1.0/*">>},
+        #{<<"template">> => <<"/~lapee-p4-bootstrap@1.0/topup">>},
         #{<<"template">> => <<"/~location@1.0/*">>},
         #{<<"template">> => <<"/~p4@1.0/balance">>},
         #{<<"template">> => <<"/~system@1.0/*">>},
@@ -622,28 +683,89 @@ install_hooks_can_select_recharging_ledger_test() ->
             <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
         },
     Config =
-        install_hooks(
+        hb_forge_seed:with_forge_bootstrap(
             #{
+                <<"bootstrap-device-src">> =>
+                    [<<"_build/default/lib/hb/src/preloaded">>],
                 <<"p4-ledger-device">> => <<"recharging-ledger@1.0">>,
                 <<"recharging-ledger-fallbacks">> => Fallbacks,
                 <<"recharging-ledger-max">> => 3000000000,
                 <<"recharging-ledger-recharge">> => 1000,
                 <<"recharging-ledger-grace">> => 0
             },
-            <<"node-address">>,
-            <<"beneficiary-address">>,
-            <<"ledger-id">>,
-            <<"bootstrap-ref">>,
-            DeviceRefs
+            fun(NodeMsg) ->
+                install_hooks(
+                    NodeMsg,
+                    <<"node-address">>,
+                    <<"beneficiary-address">>,
+                    <<"ledger-id">>,
+                    <<"bootstrap-ref">>,
+                    DeviceRefs
+                )
+            end
         ),
     On = maps:get(<<"on">>, Config),
     Request = maps:get(<<"request">>, On),
     [Response] = maps:get(<<"response">>, On),
+    FallbackID = ledger_message_id(Fallback, Config),
+    TopupRoutes = maps:get(<<"lapee-topup-routes">>, Config),
     ?assertEqual(<<"recharging-ledger-ref">>, maps:get(<<"ledger-device">>, Request)),
     ?assertEqual(Fallbacks, maps:get(<<"recharging-ledger-fallbacks">>, Request)),
+    ?assertEqual(
+        Fallback#{<<"topup-path">> => <<"ingest">>},
+        maps:get(FallbackID, TopupRoutes)
+    ),
     ?assertEqual(3000000000, maps:get(<<"recharging-ledger-max">>, Request)),
     ?assertEqual(1000, maps:get(<<"recharging-ledger-recharge">>, Response)),
     ?assertEqual(false, maps:is_key(<<"p4-ledger-device">>, Request)),
     ?assertEqual(false, maps:is_key(<<"p4-commit-charge">>, Request)).
+
+topup_dispatches_by_route_message_id_test() ->
+    FallbackMsg = #{
+        <<"device">> => <<"ao-payment@1.0">>,
+        <<"ledger-path">> => ?LEDGER_PATH
+    },
+    Route = #{
+        <<"device">> => #{
+            ingest => fun(_Base, Req, Opts) ->
+                ?assertEqual(
+                    undefined,
+                    hb_maps:get(<<"topup-route">>, Req, undefined, Opts)
+                ),
+                ?assertEqual(
+                    <<"payment-ledger">>,
+                    hb_maps:get(<<"ledger">>, Req, undefined, Opts)
+                ),
+                ?assertEqual(<<"ingest">>, hb_maps:get(<<"path">>, Req, undefined, Opts)),
+                {ok, hb_maps:get(<<"message-id">>, Req, undefined, Opts)}
+            end
+        }
+    },
+    hb_forge_seed:with_forge_bootstrap(
+        #{
+            <<"bootstrap-device-src">> =>
+                [<<"_build/default/lib/hb/src/preloaded">>]
+        },
+        fun(Opts) ->
+            LedgerID = ledger_message_id(FallbackMsg, Opts),
+            Base = #{
+                <<"lapee-topup-routes">> => #{
+                    LedgerID => Route#{<<"topup-path">> => <<"ingest">>}
+                }
+            },
+            ?assertEqual(
+                {ok, <<"payment-message">>},
+                topup(
+                    Base,
+                    #{
+                        <<"topup-route">> => LedgerID,
+                        <<"ledger">> => <<"payment-ledger">>,
+                        <<"message-id">> => <<"payment-message">>
+                    },
+                    Opts
+                )
+            )
+        end
+    ).
 
 -endif.
