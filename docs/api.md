@@ -2,9 +2,12 @@
 
 ## `start/3`
 
-Boot hook. Derives the node wallet address, chooses the beneficiary, creates the
+Boot hook. Derives the node wallet address, validates the explicit external beneficiary, creates the
 local ledger process, clears stale ledger local-name state, and installs the
 runtime profile hooks.
+
+The installed hooks use native `p4@1.0` directly and retain inherited handlers.
+The following two exports remain compatibility wrappers for older callers.
 
 ## `request/3`
 
@@ -23,9 +26,8 @@ Configuration copied into generated pricing hooks:
 
 Expected sibling device names in the node profile:
 
-- `ao-payment@1.0`
-- `arweave-byte-pricing@1.0`
-- `bundler-settlement@1.0`
-- `lapee-bundler-gc@1.0`
+- `ao-payment@1.11`
+- `arweave-byte-pricing@1.11`
+- `lapee-bundler-gc@1.11`
 - `pricing-router@1.0`
 - `simple-oracle@1.0`

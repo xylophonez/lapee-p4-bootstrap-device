@@ -15,7 +15,7 @@
 
 -define(AO_TOKEN, <<"0syT13r0s0tgPmIed95bJnuSqaD29HQNN8D3ElLSrsc">>).
 -define(LEDGER_NAME, <<"ledger">>).
--define(LEDGER_PATH, <<"/ledger~node-process@1.0">>).
+-define(LEDGER_PATH, <<"/~node-process@1.0/ledger">>).
 
 device_info(_) ->
     #{exports => [<<"start">>, <<"request">>, <<"response">>, <<"topup">>]}.
@@ -26,13 +26,8 @@ start(Base, #{<<"body">> := NodeMsg0}, _Opts) ->
         Error -> Error
     end.
 
-%% @doc Single on-request handler for the LapEE paid bundler profile.
-%%
-%% P4 currently expects exactly one request hook when exposing balance through
-%% `~p4@1.0/balance'. LapEE also needs HyperBEAM's legacy manifest request hook
-%% for plain `/TXID[/path]' reads. This handler keeps P4 as the single visible
-%% request hook while applying manifest casting only to read requests for
-%% content-address paths.
+%% @doc Legacy wrapper retained for previously configured callers.
+%% New v0.11 startup composes native P4 with the inherited request hooks.
 request(State, Raw, Opts) ->
     case maybe_manifest_request(State, Raw, Opts) of
         {ok, HookReq0} ->
@@ -92,7 +87,12 @@ resolve_topup_route(Route, Req, Opts) ->
 
 configure(NodeMsg0, BootstrapDevice) ->
     Address = node_address(NodeMsg0),
-    Beneficiary = beneficiary_address(NodeMsg0, Address),
+    case beneficiary_address(NodeMsg0, Address) of
+        {ok, Beneficiary} -> configure_paid(NodeMsg0, BootstrapDevice, Address, Beneficiary);
+        Error -> Error
+    end.
+
+configure_paid(NodeMsg0, BootstrapDevice, Address, Beneficiary) ->
     DeviceRefs = profile_device_refs(NodeMsg0, BootstrapDevice),
     WithdrawSecret = hb_util:encode(crypto:strong_rand_bytes(32)),
     case ledger_process(Address) of
@@ -140,23 +140,25 @@ node_address(NodeMsg) ->
             hb_util:human_id(Address)
     end.
 
-beneficiary_address(NodeMsg, Default) ->
-    case hb_maps:get(<<"bundler-beneficiary">>, NodeMsg, undefined, NodeMsg) of
-        undefined ->
-            case hb_maps:get(<<"bundler_beneficiary">>, NodeMsg, Default, NodeMsg) of
-                Beneficiary -> normalize_beneficiary(Beneficiary, Default)
-            end;
-        Beneficiary ->
-            normalize_beneficiary(Beneficiary, Default)
-    end.
+beneficiary_address(NodeMsg, NodeAddress) ->
+    Beneficiary = hb_maps:get(<<"bundler-beneficiary">>, NodeMsg,
+        hb_maps:get(<<"bundler_beneficiary">>, NodeMsg, undefined, NodeMsg), NodeMsg),
+    normalize_beneficiary(Beneficiary, NodeAddress).
 
-normalize_beneficiary(Beneficiary, Default)
-        when Beneficiary =:= undefined;
-             Beneficiary =:= <<>>;
-             Beneficiary =:= <<"YOUR_ARWEAVE_ADDRESS">> ->
-    Default;
-normalize_beneficiary(Beneficiary, _Default) ->
-    hb_util:human_id(Beneficiary).
+normalize_beneficiary(Beneficiary, NodeAddress) ->
+    try
+        true = is_binary(Beneficiary),
+        true = byte_size(Beneficiary) =:= 43,
+        true = Beneficiary =/= NodeAddress,
+        Decoded = hb_util:decode(Beneficiary),
+        true = byte_size(Decoded) =:= 32,
+        true = hb_util:encode(Decoded) =:= Beneficiary,
+        true = Decoded =/= <<0:256>>,
+        {ok, Beneficiary}
+    catch _:_ ->
+        {error, #{<<"status">> => 400,
+            <<"body">> => <<"A valid bundler beneficiary distinct from the node wallet is required.">>}}
+    end.
 
 ledger_process(Address) ->
     try
@@ -250,18 +252,25 @@ install_base_config(NodeMsg0, Address, Beneficiary, LedgerProc, WithdrawSecret) 
         <<"ao-payment-token">> => ?AO_TOKEN,
         <<"ao-payment-deposit-address">> => Address,
         <<"ao-payment-withdraw-recipient">> => Beneficiary,
-        <<"ao-payment-auto-withdraw">> => true,
-        <<"ao-payment-mainnet-url">> => <<"https://state.forward.computer">>,
+        <<"ao-payment-auto-withdraw">> => hb_maps:get(
+            <<"ao-payment-auto-withdraw">>, NodeMsg0, true, NodeMsg0),
+        <<"ao-payment-mainnet-url">> => hb_maps:get(
+            <<"ao-payment-mainnet-url">>, NodeMsg0,
+            <<"https://state.forward.computer">>, NodeMsg0),
         <<"ao-payment-ledger-path">> => ?LEDGER_PATH,
-        <<"ao-payment-submit-url">> => <<"https://mu.ao-testnet.xyz">>,
-        <<"ao-payment-node">> =>
+        <<"ao-payment-submit-url">> => hb_maps:get(
+            <<"ao-payment-submit-url">>, NodeMsg0,
+            <<"https://mu.ao-testnet.xyz">>, NodeMsg0),
+        <<"ao-payment-node">> => hb_maps:get(
+            <<"ao-payment-node">>, NodeMsg0,
             <<"http://localhost:", (hb_util:bin(hb_maps:get(<<"port">>, NodeMsg0, 8734, NodeMsg0)))/binary>>,
+            NodeMsg0),
         <<"local-names">> => maps:remove(?LEDGER_NAME, LocalNames0),
         <<"node-processes">> => NodeProcesses0#{?LEDGER_NAME => LedgerProc}
     },
     hb_private:set(NodeMsg1, <<"ao-payment-withdraw-secret">>, WithdrawSecret, NodeMsg0).
 
-install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, BootstrapDevice, DeviceRefs) ->
+install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, _BootstrapDevice, DeviceRefs) ->
     PricingConfig = pricing_config(NodeMsg0),
     Processor = p4_processor(PricingConfig, DeviceRefs),
     TopupRoutes = topup_routes(Processor, NodeMsg0),
@@ -271,13 +280,9 @@ install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, BootstrapDevice, Devic
             maps:get(<<"bundled-message-complete">>, On0, []),
             [bundler_gc_hook(DeviceRefs)]
         ),
-    Request =
-        request_processor(
-            maps:get(<<"request">>, On0, []),
-            Processor,
-            BootstrapDevice,
-            DeviceRefs
-        ),
+    %% v0.11 P4 discovers its processor inside an ordered hook list.
+    %% Keep the inherited authentication/rate/name/manifest/blacklist chain.
+    Request = [Processor | hook_handlers(maps:get(<<"request">>, On0, []))],
     Response =
         append_hook_handlers(
             maps:get(<<"response">>, On0, []),
@@ -293,7 +298,9 @@ install_hooks(NodeMsg0, _Address, _Beneficiary, LedgerID, BootstrapDevice, Devic
         <<"ao-payment-ledger">> => LedgerID,
         <<"lapee-topup-routes">> => TopupRoutes,
         <<"local-names">> => LocalNames0#{?LEDGER_NAME => LedgerID},
-        <<"p4-non-chargable-routes">> => p4_non_chargable_routes(LedgerID),
+        <<"p4-non-chargable-routes">> => hb_maps:get(
+            <<"p4-non-chargable-routes">>, NodeMsg0,
+            p4_non_chargable_routes(LedgerID), NodeMsg0),
         <<"on">> => On1
     }.
 
@@ -303,27 +310,6 @@ append_hook_handlers(Existing, NewHandlers) when is_list(Existing) ->
     Existing ++ NewHandlers;
 append_hook_handlers(Existing, NewHandlers) ->
     [Existing | NewHandlers].
-
-request_processor(ExistingRequest, Processor, BootstrapDevice, DeviceRefs) ->
-    Base = Processor#{
-        <<"device">> => BootstrapDevice,
-        <<"p4-device">> => <<"p4@1.0">>,
-        <<"lapee-device-aliases">> => DeviceRefs
-    },
-    case find_manifest_request(ExistingRequest) of
-        not_found -> Base;
-        ManifestRequest -> Base#{<<"manifest-request">> => ManifestRequest}
-    end.
-
-find_manifest_request(ExistingRequest) ->
-    find_manifest_request_1(hook_handlers(ExistingRequest)).
-
-find_manifest_request_1([]) ->
-    not_found;
-find_manifest_request_1([Handler = #{<<"device">> := <<"manifest@1.0">>} | _]) ->
-    Handler;
-find_manifest_request_1([_ | Rest]) ->
-    find_manifest_request_1(Rest).
 
 hook_handlers([]) ->
     [];
@@ -523,6 +509,8 @@ topup_route(Fallback, Opts) ->
 
 topup_path(<<"ao-payment@1.11">>) ->
     <<"ingest">>;
+topup_path(<<"ao-payment@1.0">>) ->
+    <<"ingest">>;
 topup_path(_Device) ->
     <<"topup">>.
 
@@ -627,7 +615,27 @@ install_base_config_clears_stale_ledger_name_test() ->
     ?assertEqual(<<"kept-id">>, maps:get(<<"other">>, LocalNames)),
     ?assertEqual(LedgerProc, maps:get(<<"ledger">>, NodeProcesses)),
     ?assertEqual(true, maps:get(<<"ao-payment-auto-withdraw">>, Config)),
+    ?assertEqual(<<"node-address">>, maps:get(<<"p4-recipient">>, Config)),
+    ?assertEqual(<<"beneficiary-address">>,
+        maps:get(<<"ao-payment-withdraw-recipient">>, Config)),
     ?assertEqual(?LEDGER_PATH, hb_maps:get(<<"ao-payment-ledger-path">>, Config, undefined, Config)).
+
+install_base_config_preserves_operator_endpoints_test() ->
+    Node = #{
+        <<"ao-payment-submit-url">> => <<"http://127.0.0.1:9999/mu">>,
+        <<"ao-payment-mainnet-url">> => <<"http://127.0.0.1:9998/state">>,
+        <<"ao-payment-node">> => <<"http://127.0.0.1:9997">>,
+        <<"ao-payment-auto-withdraw">> => false
+    },
+    Config = install_base_config(Node, <<"node-address">>,
+        <<"beneficiary-address">>, #{<<"device">> => <<"process@1.0">>},
+        <<"secret">>),
+    maps:foreach(fun(Key, Value) ->
+        ?assertEqual(Value, maps:get(Key, Config))
+    end, Node),
+    ?assertEqual(<<"node-address">>, maps:get(<<"p4-recipient">>, Config)),
+    ?assertEqual(<<"beneficiary-address">>,
+        maps:get(<<"ao-payment-withdraw-recipient">>, Config)).
 
 install_hooks_copies_pricing_config_test() ->
     DeviceRefs =
@@ -644,7 +652,10 @@ install_hooks_copies_pricing_config_test() ->
             #{
                 <<"arweave-byte-price">> => <<"dynamic">>,
                 <<"bundler-premium">> => 12.5,
-                <<"bundler-free-byte-limit">> => 102400
+                <<"bundler-free-byte-limit">> => 102400,
+                <<"on">> => #{<<"request">> => [
+                    #{<<"device">> => <<"auth-hook@1.0">>},
+                    #{<<"device">> => <<"blacklist@1.0">>}]}
             },
             <<"node-address">>,
             <<"beneficiary-address">>,
@@ -653,16 +664,41 @@ install_hooks_copies_pricing_config_test() ->
             DeviceRefs
         ),
     On = maps:get(<<"on">>, Config),
-    Request = maps:get(<<"request">>, On),
+    [Request | _] = maps:get(<<"request">>, On),
     [Response] = maps:get(<<"response">>, On),
     [_GC] = maps:get(<<"bundled-message-complete">>, On),
+    ?assertEqual(<<"p4@1.0">>, maps:get(<<"device">>, Request)),
+    ?assertEqual([#{<<"device">> => <<"auth-hook@1.0">>},
+        #{<<"device">> => <<"blacklist@1.0">>}], tl(maps:get(<<"request">>, On))),
     ?assertEqual(<<"ao-payment-ref">>, maps:get(<<"ledger-device">>, Request)),
+    ?assertEqual(<<"/~node-process@1.0/ledger">>, maps:get(<<"ledger-path">>, Request)),
     ?assertEqual(12.5, maps:get(<<"bundler-premium">>, Request)),
     ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Request)),
     ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Request)),
     ?assertEqual(12.5, maps:get(<<"bundler-premium">>, Response)),
     ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Response)),
     ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Response)).
+
+install_hooks_preserves_operator_hooks_and_exemptions_test() ->
+    Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.11">>),
+    Request = #{<<"device">> => <<"auth-hook@1.0">>},
+    Response = #{<<"device">> => <<"audit-response@1.0">>},
+    Complete = #{<<"device">> => <<"index-hook@1.0">>},
+    Exemptions = [#{<<"template">> => <<"/~my-app@1.0/health">>}],
+    Node = #{
+        <<"on">> => #{<<"request">> => Request, <<"response">> => [Response],
+            <<"bundled-message-complete">> => Complete},
+        <<"p4-non-chargable-routes">> => Exemptions
+    },
+    Config = install_hooks(Node, <<"node">>, <<"beneficiary">>,
+        <<"ledger">>, <<"lapee-p4-bootstrap@1.11">>, Refs),
+    On = maps:get(<<"on">>, Config),
+    [P4, Request] = maps:get(<<"request">>, On),
+    ?assertEqual(<<"p4@1.0">>, maps:get(<<"device">>, P4)),
+    ?assertEqual([Response, P4], maps:get(<<"response">>, On)),
+    [Complete, GC] = maps:get(<<"bundled-message-complete">>, On),
+    ?assertEqual(<<"lapee-bundler-gc@1.11">>, maps:get(<<"device">>, GC)),
+    ?assertEqual(Exemptions, maps:get(<<"p4-non-chargable-routes">>, Config)).
 
 install_hooks_can_select_recharging_ledger_test() ->
     Fallback =
@@ -704,7 +740,7 @@ install_hooks_can_select_recharging_ledger_test() ->
             end
         ),
     On = maps:get(<<"on">>, Config),
-    Request = maps:get(<<"request">>, On),
+    [Request | _] = maps:get(<<"request">>, On),
     [Response] = maps:get(<<"response">>, On),
     FallbackID = ledger_message_id(Fallback, Config),
     TopupRoutes = maps:get(<<"lapee-topup-routes">>, Config),
@@ -767,4 +803,20 @@ topup_dispatches_by_route_message_id_test() ->
         end
     ).
 
+-endif.
+
+
+-ifdef(TEST).
+beneficiary_must_be_explicit_and_distinct_from_node_test() ->
+    Node = hb_util:encode(<<1:256>>),
+    <<Prefix:42/binary, _/binary>> = Node,
+    AlternateSelf = <<Prefix/binary, "F">>,
+    ?assertEqual(hb_util:decode(Node), hb_util:decode(AlternateSelf)),
+    Payout = hb_util:encode(crypto:strong_rand_bytes(32)),
+    ?assertMatch({error, #{<<"status">> := 400}}, beneficiary_address(#{}, Node)),
+    lists:foreach(fun(Value) ->
+        ?assertMatch({error, #{<<"status">> := 400}},
+            beneficiary_address(#{<<"bundler-beneficiary">> => Value}, Node))
+    end, [<<>>, <<"YOUR_ARWEAVE_ADDRESS">>, Node, AlternateSelf, hb_util:encode(<<0:256>>), <<"invalid">>]),
+    ?assertEqual({ok, Payout}, beneficiary_address(#{<<"bundler-beneficiary">> => Payout}, Node)).
 -endif.

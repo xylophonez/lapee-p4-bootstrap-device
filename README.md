@@ -4,12 +4,17 @@ Standalone HyperBEAM Forge package for `lapee-p4-bootstrap@1.11`.
 
 LapEE start hook that assembles the AO-payment p4 bundler profile.
 
-It derives live wallet values, spawns the local AO payment ledger process, installs p4 request/response hooks, wires bundle-completion settlement and GC, and keeps pricing config in the generated hook messages.
+It requires an explicit external `bundler-beneficiary`, derives the internal node-ledger address, spawns the local AO payment ledger, and composes native P4 with inherited hooks. AO payment owns withdrawals; bundle completion schedules GC. Existing operator payment endpoints, withdrawal enablement, exemptions and pricing settings remain configurable.
 
 ## Compatibility
 
 - HyperBEAM pin: `ad415bdaaf887fb76c0a8b4f54d91fab3f9fccd8`
 - Device name: `lapee-p4-bootstrap@1.11`
+
+The internal `p4-recipient` is the node ledger address. The external
+`ao-payment-withdraw-recipient` comes from `bundler-beneficiary`; these are
+different roles and must not be conflated. The beneficiary must be a canonical,
+nonzero 32-byte address distinct from the node wallet.
 
 ## Build
 
@@ -41,8 +46,8 @@ ledgers are configured with `recharging-ledger-fallbacks`:
   "p4-ledger-device": "recharging-ledger@1.0",
   "recharging-ledger-fallbacks": [
     {
-      "device": "ao-payment@1.0",
-      "ledger-path": "/ledger~node-process@1.0",
+      "device": "ao-payment@1.11",
+      "ledger-path": "/~node-process@1.0/ledger",
       "auto-withdraw": true,
       "withdraw-token": "0syT13r0s0tgPmIed95bJnuSqaD29HQNN8D3ElLSrsc",
       "withdraw-recipient": "<bundler-beneficiary>"
@@ -64,7 +69,7 @@ GET /~meta@1.0/info/lapee-topup-routes?accept=application/json&require-codec=app
 Then call the bootstrap top-up endpoint with the selected route key:
 
 ```text
-POST /~lapee-p4-bootstrap@1.0/topup?topup-route=<route-id>
+POST /~lapee-p4-bootstrap@1.11/topup?topup-route=<route-id>
 ```
 
 The client should not calculate the route ID itself. With one fallback, use the
