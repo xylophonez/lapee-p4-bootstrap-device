@@ -5,8 +5,8 @@
 %%% start hook derives those values from the live node message, installs the
 %%% local payment ledger process, and then enables the P4 request/response hooks.
 -module(dev_lapee_p4_bootstrap).
--implements(<<"lapee-p4-bootstrap@1.0">>).
--export([info/1, start/3, request/3, response/3, topup/3]).
+-implements(<<"lapee-p4-bootstrap@1.11">>).
+-export([device_info/1, start/3, request/3, response/3, topup/3]).
 
 -include_lib("hb/include/hb.hrl").
 -ifdef(TEST).
@@ -17,7 +17,7 @@
 -define(LEDGER_NAME, <<"ledger">>).
 -define(LEDGER_PATH, <<"/ledger~node-process@1.0">>).
 
-info(_) ->
+device_info(_) ->
     #{exports => [<<"start">>, <<"request">>, <<"response">>, <<"topup">>]}.
 
 start(Base, #{<<"body">> := NodeMsg0}, _Opts) ->
@@ -411,9 +411,9 @@ p4_state(State) ->
     ).
 
 bootstrap_device_ref(Base) when is_map(Base) ->
-    maps:get(<<"device">>, Base, <<"lapee-p4-bootstrap@1.0">>);
+    maps:get(<<"device">>, Base, <<"lapee-p4-bootstrap@1.11">>);
 bootstrap_device_ref(_) ->
-    <<"lapee-p4-bootstrap@1.0">>.
+    <<"lapee-p4-bootstrap@1.11">>.
 
 non_chargable_request(HookReq, Opts) ->
     Request = hb_maps:get(<<"request">>, HookReq, #{}, Opts),
@@ -452,14 +452,14 @@ raw_hook_body(HookReq, Opts) ->
 
 profile_device_refs(NodeMsg, BootstrapDevice) ->
     #{
-        <<"ao-payment@1.0">> => device_ref(<<"ao-payment@1.0">>, NodeMsg),
-        <<"arweave-byte-pricing@1.0">> =>
-            device_ref(<<"arweave-byte-pricing@1.0">>, NodeMsg),
+        <<"ao-payment@1.11">> => device_ref(<<"ao-payment@1.11">>, NodeMsg),
+        <<"arweave-byte-pricing@1.11">> =>
+            device_ref(<<"arweave-byte-pricing@1.11">>, NodeMsg),
         <<"bundler-settlement@1.0">> =>
             device_ref(<<"bundler-settlement@1.0">>, NodeMsg),
-        <<"lapee-bundler-gc@1.0">> =>
-            device_ref(<<"lapee-bundler-gc@1.0">>, NodeMsg),
-        <<"lapee-p4-bootstrap@1.0">> => BootstrapDevice,
+        <<"lapee-bundler-gc@1.11">> =>
+            device_ref(<<"lapee-bundler-gc@1.11">>, NodeMsg),
+        <<"lapee-p4-bootstrap@1.11">> => BootstrapDevice,
         <<"pricing-router@1.0">> =>
             device_ref(<<"pricing-router@1.0">>, NodeMsg),
         <<"recharging-ledger@1.0">> =>
@@ -484,7 +484,7 @@ device_ref_1(Name, [], _Opts) ->
 
 bundler_gc_hook(DeviceRefs) ->
     #{
-        <<"device">> => maps:get(<<"lapee-bundler-gc@1.0">>, DeviceRefs),
+        <<"device">> => maps:get(<<"lapee-bundler-gc@1.11">>, DeviceRefs),
         <<"hook">> => #{<<"result">> => <<"ignore">>}
     }.
 
@@ -522,7 +522,7 @@ topup_route(Fallback, Opts) ->
         <<"topup-path">> => topup_path(hb_maps:get(<<"device">>, Fallback, undefined, Opts))
     }.
 
-topup_path(<<"ao-payment@1.0">>) ->
+topup_path(<<"ao-payment@1.11">>) ->
     <<"ingest">>;
 topup_path(_Device) ->
     <<"topup">>.
@@ -539,18 +539,18 @@ p4_processor(PricingConfig, DeviceRefs) ->
             #{
                 <<"template">> => <<"/~bundler@1.0/tx">>,
                 <<"pricing-device">> =>
-                    maps:get(<<"arweave-byte-pricing@1.0">>, DeviceRefs)
+                    maps:get(<<"arweave-byte-pricing@1.11">>, DeviceRefs)
             },
             #{
                 <<"template">> => <<"/~bundler@1.0/item">>,
                 <<"pricing-device">> =>
-                    maps:get(<<"arweave-byte-pricing@1.0">>, DeviceRefs)
+                    maps:get(<<"arweave-byte-pricing@1.11">>, DeviceRefs)
             }
         ]
     }).
 
 p4_ledger_device(PricingConfig, DeviceRefs) ->
-    Name = maps:get(<<"p4-ledger-device">>, PricingConfig, <<"ao-payment@1.0">>),
+    Name = maps:get(<<"p4-ledger-device">>, PricingConfig, <<"ao-payment@1.11">>),
     maps:get(Name, DeviceRefs, Name).
 
 pricing_config(NodeMsg) ->
@@ -586,8 +586,8 @@ p4_non_chargable_routes(LedgerID) ->
         #{<<"template">> => <<"/*~node-process@1.0/*">>},
         #{<<"template">> => <<?LEDGER_PATH/binary, "/*">>},
         #{<<"template">> => <<"/", LedgerID/binary, "~process@1.0/*">>},
-        #{<<"template">> => <<"/~ao-payment@1.0/*">>},
-        #{<<"template">> => <<"/~lapee-p4-bootstrap@1.0/topup">>},
+        #{<<"template">> => <<"/~ao-payment@1.11/*">>},
+        #{<<"template">> => <<"/~lapee-p4-bootstrap@1.11/topup">>},
         #{<<"template">> => <<"/~location@1.0/*">>},
         #{<<"template">> => <<"/~p4@1.0/balance">>},
         #{<<"template">> => <<"/~system@1.0/*">>},
@@ -633,10 +633,10 @@ install_base_config_clears_stale_ledger_name_test() ->
 install_hooks_copies_pricing_config_test() ->
     DeviceRefs =
         #{
-            <<"ao-payment@1.0">> => <<"ao-payment-ref">>,
-            <<"arweave-byte-pricing@1.0">> => <<"arweave-byte-pricing-ref">>,
+            <<"ao-payment@1.11">> => <<"ao-payment-ref">>,
+            <<"arweave-byte-pricing@1.11">> => <<"arweave-byte-pricing-ref">>,
             <<"bundler-settlement@1.0">> => <<"bundler-settlement-ref">>,
-            <<"lapee-bundler-gc@1.0">> => <<"lapee-bundler-gc-ref">>,
+            <<"lapee-bundler-gc@1.11">> => <<"lapee-bundler-gc-ref">>,
             <<"pricing-router@1.0">> => <<"pricing-router-ref">>,
             <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
         },
@@ -668,17 +668,17 @@ install_hooks_copies_pricing_config_test() ->
 install_hooks_can_select_recharging_ledger_test() ->
     Fallback =
         #{
-            <<"device">> => <<"ao-payment@1.0">>,
+            <<"device">> => <<"ao-payment@1.11">>,
             <<"ledger-path">> => ?LEDGER_PATH,
             <<"auto-withdraw">> => true
         },
     Fallbacks = [Fallback],
     DeviceRefs =
         #{
-            <<"ao-payment@1.0">> => <<"ao-payment-ref">>,
-            <<"arweave-byte-pricing@1.0">> => <<"arweave-byte-pricing-ref">>,
+            <<"ao-payment@1.11">> => <<"ao-payment-ref">>,
+            <<"arweave-byte-pricing@1.11">> => <<"arweave-byte-pricing-ref">>,
             <<"bundler-settlement@1.0">> => <<"bundler-settlement-ref">>,
-            <<"lapee-bundler-gc@1.0">> => <<"lapee-bundler-gc-ref">>,
+            <<"lapee-bundler-gc@1.11">> => <<"lapee-bundler-gc-ref">>,
             <<"pricing-router@1.0">> => <<"pricing-router-ref">>,
             <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
         },
@@ -722,7 +722,7 @@ install_hooks_can_select_recharging_ledger_test() ->
 
 topup_dispatches_by_route_message_id_test() ->
     FallbackMsg = #{
-        <<"device">> => <<"ao-payment@1.0">>,
+        <<"device">> => <<"ao-payment@1.11">>,
         <<"ledger-path">> => ?LEDGER_PATH
     },
     Route = #{

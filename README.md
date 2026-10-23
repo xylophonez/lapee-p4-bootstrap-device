@@ -1,6 +1,6 @@
 # Lapee P4 Bootstrap Device
 
-Standalone HyperBEAM Forge package for `lapee-p4-bootstrap@1.0`.
+Standalone HyperBEAM Forge package for `lapee-p4-bootstrap@1.11`.
 
 LapEE start hook that assembles the AO-payment p4 bundler profile.
 
@@ -8,8 +8,8 @@ It derives live wallet values, spawns the local AO payment ledger process, insta
 
 ## Compatibility
 
-- HyperBEAM pin: `4177b91993b2f590f4906bc9ca548724f8408875`
-- Device name: `lapee-p4-bootstrap@1.0`
+- HyperBEAM pin: `ad415bdaaf887fb76c0a8b4f54d91fab3f9fccd8`
+- Device name: `lapee-p4-bootstrap@1.11`
 
 ## Build
 
@@ -72,7 +72,10 @@ only route. With multiple fallbacks, inspect the route value and choose the
 payment device the client supports. `ao-payment@1.0` routes are forwarded to
 `ingest`; other fallback devices default to `topup`.
 
-## Published Device
+## Historical Published Device
+
+The following IDs belong to the earlier 1.0 package, not this 1.11 source.
+New package publication is separate from a Git push.
 
 ```bash
 device publish: lapee-p4-bootstrap@1.0 
