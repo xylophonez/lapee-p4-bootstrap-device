@@ -1,15 +1,15 @@
 # Lapee P4 Bootstrap Device
 
-Standalone HyperBEAM Forge package for `lapee-p4-bootstrap@1.11`.
+Standalone HyperBEAM Forge package for `lapee-p4-bootstrap@1.12`.
 
 LapEE start hook that assembles the AO-payment p4 bundler profile.
 
-It requires an explicit external `bundler-beneficiary`, derives the internal node-ledger address, spawns the local AO payment ledger, and composes native P4 with inherited hooks. AO payment owns withdrawals; bundle completion schedules GC. Existing operator payment endpoints, withdrawal enablement, exemptions and pricing settings remain configurable.
+It requires an explicit external `bundler-beneficiary`, derives the internal node-ledger address, spawns the local AO payment ledger, and composes native P4 with inherited hooks. AO payment owns withdrawals; bundle completion hooks remain operator-configured. Existing operator payment endpoints, withdrawal enablement, exemptions and pricing settings remain configurable.
 
 ## Compatibility
 
 - HyperBEAM pin: `ad415bdaaf887fb76c0a8b4f54d91fab3f9fccd8`
-- Device name: `lapee-p4-bootstrap@1.11`
+- Device name: `lapee-p4-bootstrap@1.12`
 
 The internal `p4-recipient` is the node ledger address. The external
 `ao-payment-withdraw-recipient` comes from `bundler-beneficiary`; these are
@@ -69,7 +69,7 @@ GET /~meta@1.0/info/lapee-topup-routes?accept=application/json&require-codec=app
 Then call the bootstrap top-up endpoint with the selected route key:
 
 ```text
-POST /~lapee-p4-bootstrap@1.11/topup?topup-route=<route-id>
+POST /~lapee-p4-bootstrap@1.12/topup?topup-route=<route-id>
 ```
 
 The client should not calculate the route ID itself. With one fallback, use the
@@ -79,7 +79,7 @@ payment device the client supports. `ao-payment@1.0` routes are forwarded to
 
 ## Historical Published Device
 
-The following IDs belong to the earlier 1.0 package, not this 1.11 source.
+The following IDs belong to the earlier 1.0 package, not this 1.12 source.
 New package publication is separate from a Git push.
 
 ```bash

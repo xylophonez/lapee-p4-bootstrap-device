@@ -28,6 +28,5 @@ Expected sibling device names in the node profile:
 
 - `ao-payment@1.11`
 - `arweave-byte-pricing@1.11`
-- `lapee-bundler-gc@1.11`
 - `pricing-router@1.0`
 - `simple-oracle@1.0`
