@@ -218,7 +218,6 @@ script_paths(Name) ->
     ArchivePriv =
         filename:join([
             hb_device_archive:implementation_dir(?MODULE),
-            "priv",
             "lapee-p4",
             NameList
         ]),
