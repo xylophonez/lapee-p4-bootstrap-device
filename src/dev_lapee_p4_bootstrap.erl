@@ -5,7 +5,7 @@
 %%% start hook derives those values from the live node message, installs the
 %%% local payment ledger process, and then enables the P4 request/response hooks.
 -module(dev_lapee_p4_bootstrap).
--implements(<<"lapee-p4-bootstrap@1.12">>).
+-implements(<<"lapee-p4-bootstrap@1.13">>).
 -export([device_info/1, start/3, request/3, response/3, topup/3]).
 
 -include_lib("hb/include/hb.hrl").
@@ -390,9 +390,9 @@ p4_state(State) ->
     ).
 
 bootstrap_device_ref(Base) when is_map(Base) ->
-    maps:get(<<"device">>, Base, <<"lapee-p4-bootstrap@1.12">>);
+    maps:get(<<"device">>, Base, <<"lapee-p4-bootstrap@1.13">>);
 bootstrap_device_ref(_) ->
-    <<"lapee-p4-bootstrap@1.12">>.
+    <<"lapee-p4-bootstrap@1.13">>.
 
 non_chargable_request(HookReq, Opts) ->
     Request = hb_maps:get(<<"request">>, HookReq, #{}, Opts),
@@ -436,9 +436,10 @@ profile_device_refs(NodeMsg, BootstrapDevice) ->
             device_ref(<<"arweave-byte-pricing@1.11">>, NodeMsg),
         <<"bundler-settlement@1.0">> =>
             device_ref(<<"bundler-settlement@1.0">>, NodeMsg),
-        <<"lapee-p4-bootstrap@1.12">> => BootstrapDevice,
-        <<"pricing-router@1.0">> =>
-            device_ref(<<"pricing-router@1.0">>, NodeMsg),
+        <<"lapee-p4-bootstrap@1.13">> => BootstrapDevice,
+        <<"pricing-router@1.1">> =>
+            device_ref(<<"pricing-router@1.1">>, NodeMsg),
+        <<"faff@1.0">> => device_ref(<<"faff@1.0">>, NodeMsg),
         <<"recharging-ledger@1.0">> =>
             device_ref(<<"recharging-ledger@1.0">>, NodeMsg),
         <<"simple-oracle@1.0">> =>
@@ -505,10 +506,10 @@ p4_processor(PricingConfig, DeviceRefs) ->
     maps:merge(maps:remove(<<"p4-ledger-device">>, PricingConfig), #{
         <<"device">> => <<"p4@1.0">>,
         <<"ledger-device">> => LedgerDevice,
-        <<"pricing-device">> => maps:get(<<"pricing-router@1.0">>, DeviceRefs),
+        <<"pricing-device">> => maps:get(<<"pricing-router@1.1">>, DeviceRefs),
         <<"default-pricing-device">> => <<"simple-pay@1.0">>,
         <<"ledger-path">> => ?LEDGER_PATH,
-        <<"pricing-routes">> => [
+        <<"pricing-routes">> => allow_list_routes(PricingConfig, DeviceRefs) ++ [
             #{
                 <<"template">> => <<"/~bundler@1.0/tx">>,
                 <<"pricing-device">> =>
@@ -521,6 +522,24 @@ p4_processor(PricingConfig, DeviceRefs) ->
             }
         ]
     }).
+
+%% @doc With a `faff-allow-list', bundling is free for those signers: faff
+%% prices them at 0 and everyone else falls through to byte pricing.
+allow_list_routes(PricingConfig, DeviceRefs) ->
+    case maps:get(<<"faff-allow-list">>, PricingConfig, []) of
+        [_ | _] ->
+            [
+                #{
+                    <<"template">> => Template,
+                    <<"pricing-device">> => maps:get(<<"faff@1.0">>, DeviceRefs),
+                    <<"fallthrough">> => true
+                }
+            ||
+                Template <- [<<"/~bundler@1.0/tx">>, <<"/~bundler@1.0/item">>]
+            ];
+        _ ->
+            []
+    end.
 
 p4_ledger_device(PricingConfig, DeviceRefs) ->
     Name = maps:get(<<"p4-ledger-device">>, PricingConfig, <<"ao-payment@1.11">>),
@@ -540,7 +559,8 @@ pricing_config(NodeMsg) ->
             <<"recharging-ledger-recharge">>,
             <<"recharging-ledger-period">>,
             <<"recharging-ledger-grace">>,
-            <<"recharging-ledger-exempt">>
+            <<"recharging-ledger-exempt">>,
+            <<"faff-allow-list">>
         ],
         NodeMsg,
         #{}
@@ -560,7 +580,7 @@ p4_non_chargable_routes(LedgerID) ->
         #{<<"template">> => <<?LEDGER_PATH/binary, "/*">>},
         #{<<"template">> => <<"/", LedgerID/binary, "~process@1.0/*">>},
         #{<<"template">> => <<"/~ao-payment@1.11/*">>},
-        #{<<"template">> => <<"/~lapee-p4-bootstrap@1.12/topup">>},
+        #{<<"template">> => <<"/~lapee-p4-bootstrap@1.13/topup">>},
         #{<<"template">> => <<"/~location@1.0/*">>},
         #{<<"template">> => <<"/~p4@1.0/balance">>},
         #{<<"template">> => <<"/~system@1.0/*">>},
@@ -629,7 +649,7 @@ install_hooks_copies_pricing_config_test() ->
             <<"ao-payment@1.11">> => <<"ao-payment-ref">>,
             <<"arweave-byte-pricing@1.11">> => <<"arweave-byte-pricing-ref">>,
             <<"bundler-settlement@1.0">> => <<"bundler-settlement-ref">>,
-            <<"pricing-router@1.0">> => <<"pricing-router-ref">>,
+            <<"pricing-router@1.1">> => <<"pricing-router-ref">>,
             <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
         },
     Config =
@@ -664,8 +684,51 @@ install_hooks_copies_pricing_config_test() ->
     ?assertEqual(<<"dynamic">>, maps:get(<<"arweave-byte-price">>, Response)),
     ?assertEqual(102400, maps:get(<<"bundler-free-byte-limit">>, Response)).
 
+install_hooks_without_allow_list_keeps_byte_pricing_routes_test() ->
+    Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.13">>),
+    [Request | _] = maps:get(<<"request">>, maps:get(<<"on">>,
+        install_hooks(#{}, <<"node">>, <<"beneficiary">>, <<"ledger">>,
+            <<"lapee-p4-bootstrap@1.13">>, Refs))),
+    ?assertEqual(<<"pricing-router@1.1">>, maps:get(<<"pricing-device">>, Request)),
+    ?assertEqual(
+        [<<"/~bundler@1.0/tx">>, <<"/~bundler@1.0/item">>],
+        [maps:get(<<"template">>, R) || R <- maps:get(<<"pricing-routes">>, Request)]
+    ),
+    ?assertNot(lists:any(fun(R) -> maps:is_key(<<"fallthrough">>, R) end,
+        maps:get(<<"pricing-routes">>, Request))).
+
+install_hooks_with_allow_list_puts_faff_first_test() ->
+    Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.13">>),
+    Owner = <<"kaYP9bJtpqON8Kyy3RbqnqdtDBDUsPTQTNUCvZtKiFI">>,
+    [Request | _] = maps:get(<<"request">>, maps:get(<<"on">>,
+        install_hooks(#{<<"faff-allow-list">> => [Owner]}, <<"node">>,
+            <<"beneficiary">>, <<"ledger">>, <<"lapee-p4-bootstrap@1.13">>, Refs))),
+    ?assertEqual([Owner], maps:get(<<"faff-allow-list">>, Request)),
+    ?assertEqual(
+        [
+            {<<"/~bundler@1.0/tx">>, <<"faff@1.0">>, true},
+            {<<"/~bundler@1.0/item">>, <<"faff@1.0">>, true},
+            {<<"/~bundler@1.0/tx">>, <<"arweave-byte-pricing@1.11">>, false},
+            {<<"/~bundler@1.0/item">>, <<"arweave-byte-pricing@1.11">>, false}
+        ],
+        [
+            {
+                maps:get(<<"template">>, R),
+                maps:get(<<"pricing-device">>, R),
+                maps:get(<<"fallthrough">>, R, false)
+            }
+        ||
+            R <- maps:get(<<"pricing-routes">>, Request)
+        ]
+    ),
+    % An empty list is the same as no list.
+    [Plain | _] = maps:get(<<"request">>, maps:get(<<"on">>,
+        install_hooks(#{<<"faff-allow-list">> => []}, <<"node">>,
+            <<"beneficiary">>, <<"ledger">>, <<"lapee-p4-bootstrap@1.13">>, Refs))),
+    ?assertEqual(2, length(maps:get(<<"pricing-routes">>, Plain))).
+
 install_hooks_preserves_operator_hooks_and_exemptions_test() ->
-    Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.12">>),
+    Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.13">>),
     Request = #{<<"device">> => <<"auth-hook@1.0">>},
     Response = #{<<"device">> => <<"audit-response@1.0">>},
     Complete = #{<<"device">> => <<"index-hook@1.0">>},
@@ -676,7 +739,7 @@ install_hooks_preserves_operator_hooks_and_exemptions_test() ->
         <<"p4-non-chargable-routes">> => Exemptions
     },
     Config = install_hooks(Node, <<"node">>, <<"beneficiary">>,
-        <<"ledger">>, <<"lapee-p4-bootstrap@1.12">>, Refs),
+        <<"ledger">>, <<"lapee-p4-bootstrap@1.13">>, Refs),
     On = maps:get(<<"on">>, Config),
     [P4, Request] = maps:get(<<"request">>, On),
     ?assertEqual(<<"p4@1.0">>, maps:get(<<"device">>, P4)),
@@ -697,7 +760,7 @@ install_hooks_can_select_recharging_ledger_test() ->
             <<"ao-payment@1.11">> => <<"ao-payment-ref">>,
             <<"arweave-byte-pricing@1.11">> => <<"arweave-byte-pricing-ref">>,
             <<"bundler-settlement@1.0">> => <<"bundler-settlement-ref">>,
-            <<"pricing-router@1.0">> => <<"pricing-router-ref">>,
+            <<"pricing-router@1.1">> => <<"pricing-router-ref">>,
             <<"recharging-ledger@1.0">> => <<"recharging-ledger-ref">>
         },
     Config =

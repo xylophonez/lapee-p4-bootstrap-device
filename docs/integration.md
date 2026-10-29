@@ -1,9 +1,9 @@
 # Integration
 
-Use `lapee-p4-bootstrap@1.12` as a start hook on HyperBEAM RC4
+Use `lapee-p4-bootstrap@1.13` as a start hook on HyperBEAM RC4
 `ad415bdaaf887fb76c0a8b4f54d91fab3f9fccd8`. Configure trusted implementation
 pins using ordinary node configuration. Default sibling names are
-`ao-payment@1.11`, `arweave-byte-pricing@1.11`, `pricing-router@1.0` and `simple-oracle@1.0`. Explicit name resolvers and the
+`ao-payment@1.11`, `arweave-byte-pricing@1.11`, `pricing-router@1.1`, `faff@1.0` and `simple-oracle@1.0`. Explicit name resolvers and the
 existing `p4-ledger-device`/recharging fallback selection remain available.
 
 Provide `bundler-beneficiary` from the user's configuration UI: a canonical,

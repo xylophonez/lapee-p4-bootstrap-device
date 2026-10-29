@@ -23,10 +23,14 @@ Configuration copied into generated pricing hooks:
 - `arweave-byte-price`
 - `bundler-premium` / `bundler_premium`
 - `bundler-free-byte-limit` / `bundler_free_byte_limit`
+- `faff-allow-list`: when non-empty, `faff@1.0` fall-through routes for
+  `/~bundler@1.0/tx` and `/~bundler@1.0/item` precede byte pricing, so these
+  signers bundle for free
 
 Expected sibling device names in the node profile:
 
 - `ao-payment@1.11`
 - `arweave-byte-pricing@1.11`
-- `pricing-router@1.0`
+- `pricing-router@1.1`
+- `faff@1.0` (preloaded)
 - `simple-oracle@1.0`
