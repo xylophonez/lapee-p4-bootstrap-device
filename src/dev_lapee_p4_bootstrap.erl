@@ -535,7 +535,7 @@ allow_list_routes(PricingConfig, DeviceRefs) ->
                     <<"fallthrough">> => true
                 }
             ||
-                Template <- [<<"/~bundler@1.0/tx">>, <<"/~bundler@1.0/item">>]
+                Template <- [<<"^/~bundler@1[.]0/tx(?:[?]|\\z)">>, <<"^/~bundler@1[.]0/item(?:[?]|\\z)">>]
             ];
         _ ->
             []
@@ -706,8 +706,8 @@ install_hooks_with_allow_list_puts_faff_first_test() ->
     ?assertEqual([Owner], maps:get(<<"faff-allow-list">>, Request)),
     ?assertEqual(
         [
-            {<<"/~bundler@1.0/tx">>, <<"faff@1.0">>, true},
-            {<<"/~bundler@1.0/item">>, <<"faff@1.0">>, true},
+            {<<"^/~bundler@1[.]0/tx(?:[?]|\\z)">>, <<"faff@1.0">>, true},
+            {<<"^/~bundler@1[.]0/item(?:[?]|\\z)">>, <<"faff@1.0">>, true},
             {<<"/~bundler@1.0/tx">>, <<"arweave-byte-pricing@1.11">>, false},
             {<<"/~bundler@1.0/item">>, <<"arweave-byte-pricing@1.11">>, false}
         ],
@@ -726,6 +726,28 @@ install_hooks_with_allow_list_puts_faff_first_test() ->
         install_hooks(#{<<"faff-allow-list">> => []}, <<"node">>,
             <<"beneficiary">>, <<"ledger">>, <<"lapee-p4-bootstrap@1.13">>, Refs))),
     ?assertEqual(2, length(maps:get(<<"pricing-routes">>, Plain))).
+
+install_hooks_allow_list_only_matches_upload_endpoints_test() ->
+    Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.13">>),
+    [Request | _] = maps:get(<<"request">>, maps:get(<<"on">>,
+        install_hooks(#{<<"faff-allow-list">> => [<<"owner">>]}, <<"node">>,
+            <<"beneficiary">>, <<"ledger">>, <<"lapee-p4-bootstrap@1.13">>, Refs))),
+    Routes = [R || R <- maps:get(<<"pricing-routes">>, Request),
+        maps:get(<<"fallthrough">>, R, false)],
+    Matches = fun(Path) -> lists:any(fun(Route) ->
+        hb_util:template_matches(#{<<"route-path">> => Path},
+            maps:get(<<"template">>, Route), #{})
+    end, Routes) end,
+    lists:foreach(fun(Path) -> ?assert(Matches(Path)) end, [
+        <<"/~bundler@1.0/tx">>, <<"/~bundler@1.0/item">>,
+        <<"/~bundler@1.0/tx?variant=ans104">>, <<"/~bundler@1.0/item?variant=ans104">>
+    ]),
+    lists:foreach(fun(Path) -> ?assertNot(Matches(Path)) end, [
+        <<"/unrelated/~bundler@1.0/tx">>, <<"/~bundler@1x0/tx">>,
+        <<"/~bundler@1.0/tx-extra">>, <<"/~bundler@1.0/item-extra">>,
+        <<"/~bundler@1.0/tx/other">>, <<"/~bundler@1.0/item/id/bundle">>,
+        <<"/~bundler@1.0/tx\n">>, <<"/~bundler@1.0">>, <<"/unrelated">>
+    ]).
 
 install_hooks_preserves_operator_hooks_and_exemptions_test() ->
     Refs = profile_device_refs(#{}, <<"lapee-p4-bootstrap@1.13">>),
